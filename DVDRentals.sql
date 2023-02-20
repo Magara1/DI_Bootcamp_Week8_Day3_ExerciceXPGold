@@ -1,65 +1,119 @@
 -----Exercice XPGold----
 
 ---Exercice1: DVD Rental---
-
--- 1--Retrieve all films with a rating of G or PG, 
-	-- which are are not currently rented (they have been returned/have never been borrowed).
-SELECT DISTINCT(inventory.film_id), film.*
+-- 1.Get a list of all rentals which are out (have not been returned). 
+	-- How do we identify these films in the database?
+SELECT DISTINCT(film.film_id), film.*
 FROM film
 INNER JOIN inventory ON inventory.film_id = film.film_id
-WHERE film.rating='G' OR film.rating = 'PG'
-AND film.film_id NOT IN (SELECT rental.inventory_id FROM rental);
+INNER JOIN rental ON rental.inventory_id = inventory.inventory_id
+WHERE rental.return_date IS NULL;
+
+-- 2.Get a list of all customers who have not returned their rentals. 
+	-- Make sure to group your results.
+SELECT customer.*, film.title
+FROM customer
+INNER JOIN rental ON rental.customer_id = customer.customer_id
+INNER JOIN inventory ON inventory.inventory_id = rental.inventory_id
+INNER JOIN film ON film.film_id = inventory.film_id
+WHERE rental.return_date IS NULL;
+
+-- 3.Get a list of all the Action films with Joe Swank.
+	-- Before you start, could there be a shortcut to getting this information? Maybe a view?
+SELECT film.*
+FROM film 
+INNER JOIN film_category ON film_category.film_id = film.film_id
+INNER JOIN category ON category.category_id = film_category.category_id
+INNER JOIN film_actor ON film_actor.film_id = film.film_id
+INNER JOIN actor ON actor.actor_id = film_actor.actor_id
+WHERE category.name = 'Action' AND actor.first_name || ' ' || actor.last_name = 'Joe Swank';
+
+-----Exo 2------
+-- 1. How many stores there are, and in which city and country they are located.
+SELECT COUNT(store.store_id) FROM store;
+
+SELECT store.*, city.city, country.country
+FROM store
+INNER JOIN address ON address.address_id = store.address_id
+INNER JOIN city ON city.city_id = address.city_id
+INNER JOIN country ON country.country_id = city.country_id
+GROUP BY (store.store_id, city.city, country.country);
+
+-- 2. How many hours of viewing time there are in total in each store – 
+	-- in other words, the sum of the length of every inventory item in each store.
+SELECT store.store_id, SUM(film.length) AS total_viewing
+FROM film
+INNER JOIN inventory ON inventory.film_id = film.film_id
+INNER JOIN store ON store.store_id = inventory.store_id
+GROUP BY(store.store_id);
+
+-- 3. Make sure to exclude any inventory items which are not yet returned. 
+	-- (Yes, even in the time of zombies there are people who do not return their DVDs)
+SELECT store.store_id, SUM(film.length) AS total_viewing
+FROM film
+INNER JOIN inventory ON inventory.film_id = film.film_id
+INNER JOIN store ON store.store_id = inventory.store_id
+INNER JOIN rental ON rental.inventory_id = inventory.inventory_id
+WHERE rental.return_date IS NULL 
+GROUP BY(store.store_id); 
+
+-- 4. A list of all customers in the cities where the stores are located.
+SELECT store.store_id, city.city,
+		 customer.first_name || ' ' || customer.last_name AS "customer"
+FROM customer
+INNER JOIN store ON store.store_id = customer.store_id
+INNER JOIN address ON address.address_id = store.address_id
+INNER JOIN city ON city.city_id = address.city_id
+ORDER BY store.store_id 
+
+-- 5. A list of all customers in the countries where the stores are located.
+SELECT store.store_id, country.country,
+		 customer.first_name || ' ' || customer.last_name AS "customer"
+FROM customer
+INNER JOIN store ON store.store_id = customer.store_id
+INNER JOIN address ON address.address_id = store.address_id
+INNER JOIN city ON city.city_id = address.city_id
+INNER JOIN country ON country.country_id = city.country_id
+ORDER BY store.store_id;
+
 
 /*
-	1.---Create a new table which will represent a waiting list for children’s movies. 
-	This will allow a child to add their name to the list until the DVD is available 
-	(has been returned). Once the child takes the DVD, their name should be 
-	removed from the waiting list (ideally using triggers, but we have not 
-	learned about them yet. Let’s assume that our Python program will manage this). 
-	Which table references should be included?
+	6. Some people will be frightened by watching scary movies while 
+		zombies walk the streets. Create a ‘safe list’ of all movies which do not 
+		include the ‘Horror’ category, or contain the words ‘beast’, ‘monster’, 
+		‘ghost’, ‘dead’, ‘zombie’, or ‘undead’ in their titles or descriptions… 
+		Get the sum of their viewing time (length).
+		Hint : use the CHECK contraint
 */
-CREATE TABLE waiting_list(
-	id SERIAL PRIMARY KEY,
-	complete_name VARCHAR NOT NULL,
-	inventory_id INTEGER NOT NULL,
-	takes BOOLEAN DEFAULT FALSE,
-	CONSTRAINT fk_inventory
-		FOREIGN KEY(inventory_id)
-		REFERENCES inventory(inventory_id)
-		ON UPDATE CASCADE 
-		ON DELETE RESTRICT
-);
+CREATE VIEW safe_film_list AS 
+SELECT film.*, category.category_id, category.name
+FROM film 
+INNER JOIN film_category ON film_category.film_id = film.film_id
+INNER JOIN category ON category.category_id = film_category.category_id
+WHERE category.category_id != 11
+AND (film.title NOT ILIKE '%beast%' OR film.title NOT ILIKE '%monster%' 
+	OR film.title NOT ILIKE '%ghost%' OR film.title NOT ILIKE '%dead%'
+	OR film.title NOT LIKE '%zombie%' OR film.title NOT LIKE '%undead%'
+	OR film.description NOT LIKE '%beast%' OR film.description NOT ILIKE '%monster%' 
+	OR film.description NOT ILIKE '%ghost%' OR film.description NOT ILIKE '%dead%'
+	OR film.description NOT LIKE '%zombie%' OR film.description NOT LIKE '%undead%')
 
-CREATE OR REPLACE FUNCTION fn_waiting_list() 
-   RETURNS TRIGGER 
-   LANGUAGE PLPGSQL
-AS 
-'
-BEGIN
-	IF NEW.takes THEN
-		DELETE FROM waiting_list WHERE id = NEW.id; 
-	END IF;
-   
-   RETURN NULL;
-END;
-'
+SELECT SUM(safe_film_list.length) AS viewing_time
+FROM safe_film_list ;
 
-CREATE TRIGGER tr_waiting_list
-   AFTER UPDATE
-   ON waiting_list
-   FOR EACH ROW
-       EXECUTE PROCEDURE fn_waiting_list();
-       
+-- 7. For both the ‘general’ and the ‘safe’ lists above, 
+	-- also calculate the time in hours and days (not just minutes).
+-- safe list
+SELECT SUM(safe_film_list.length) AS viewing_time,
+		 CEIL(SUM(safe_film_list.length) / (24 * 60)) AS "jour(s)", 
+		 CEIL((SUM(safe_film_list.length)%(24*60))/60) AS "heure(s)",
+		 CEIL((SUM(safe_film_list.length)-(CEIL(SUM(safe_film_list.length) / (24 * 60))*24*60 + CEIL((SUM(safe_film_list.length)%(24*60))/60)*60))) AS "minutes(s)"
+FROM safe_film_list;
 
--- 3.---Retrieve the number of people waiting for each children’s DVD. 
-	-- Test this by adding rows to the table that you created in question 2 above.
-INSERT INTO waiting_list(complete_name, inventory_id)
-VALUES('Enfant 1', 1),
-		('Enfant 2', 2),
-		('Enfant 3', 3),
-		('Enfant 4', 4),
-		('Enfant 5', 5);
-		
-UPDATE waiting_list
-SET takes = TRUE 
-WHERE id IN (1, 3, 5);
+--unsafe list
+SELECT SUM(film.length) AS viewing_time,
+		 CEIL(SUM(film.length) / (24 * 60)) AS "jour(s)", 
+		 CEIL((SUM(film.length)%(24*60))/60) AS "heure(s)",
+		 CEIL((SUM(film.length)-(CEIL(SUM(film.length) / (24 * 60))*24*60 + CEIL((SUM(film.length)%(24*60))/60)*60))) AS "minutes(s)"
+FROM film 
+WHERE film.film_id NOT IN (SELECT safe_film_list.film_id FROM safe_film_list)
